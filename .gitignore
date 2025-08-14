@@ -1,0 +1,21 @@
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+.venv311/
+
+# Logs & local stuff
+logs.log
+.streamlit/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# (Optional) model binaries — leave commented so models are included
+# models/*.pkl
+# models/*.joblib

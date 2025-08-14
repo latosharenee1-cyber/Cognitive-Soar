@@ -1,0 +1,3 @@
+Cluster 0 => Hacktivist
+Cluster 1 => State Sponsored
+Cluster 2 => Organized Cybercrime
