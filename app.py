@@ -30,11 +30,11 @@ def _load_models():
     return clf, pipe, features, mapping
 
 
-# two blank lines after top-level def are required by flake8 (E305)
+# (flake8: ensure two blank lines after top-level defs)
 clf, cluster_pipe, feature_cols, cluster_map = _load_models()
 
 st.title("Cognitive SOAR")
-st.caption("From prediction to attribution with a dual model workflow")
+st.caption("From prediction to attribution with a dual-model workflow")
 
 basic_tab, attrib_tab = st.tabs(["Prediction", "Threat Attribution"])
 
@@ -93,4 +93,50 @@ with basic_tab:
         else:
             label = int(pred.loc[0, "Label"])
 
-        if "predict
+        if "prediction_score" in pred:
+            score = float(pred.loc[0, "prediction_score"])
+        else:
+            score = float(pred.loc[0, "Score"])
+
+        if label == 1:
+            st.success(f"Verdict: MALICIOUS  (confidence {score:.2f})")
+            st.session_state["last_verdict_malicious"] = True
+            st.session_state["last_sample"] = sample
+        else:
+            st.info(f"Verdict: BENIGN  (confidence {1.0 - score:.2f})")
+            st.session_state["last_verdict_malicious"] = False
+            st.session_state["last_sample"] = sample
+
+with attrib_tab:
+    st.subheader("Actor profile attribution")
+    if st.session_state.get("last_verdict_malicious") and st.session_state.get(
+        "last_sample"
+    ) is not None:
+        X = st.session_state["last_sample"][feature_cols]
+        cluster_id = int(cluster_pipe.predict(X)[0])
+        actor = cluster_map.get(cluster_id, f"Cluster {cluster_id}")
+        st.metric("Predicted actor profile", actor)
+
+        with st.expander("Why this profile", expanded=True):
+            st.write(
+                "**Organized Cybercrime**\n"
+                "Typically high volume and noisy. Often uses shorteners and sometimes IP "
+                "literals. Exploits structure tricks and drive-by campaigns for "
+                "monetization.\n\n"
+                "**Hacktivist**\n"
+                "Opportunistic action. Messaging can include political language. Tactics "
+                "vary with moderate structure anomalies.\n\n"
+                "**State Sponsored**\n"
+                "Higher sophistication. Valid SSL and subtlety with lower use of "
+                "shorteners and IP literals. Often patient and well resourced."
+            )
+
+        st.code(f"Cluster id: {cluster_id}  ->  {actor}")
+    else:
+        st.info("Run a prediction first. Attribution is only shown for malicious results.")
+
+st.sidebar.header("About")
+st.sidebar.write(
+    "This demo pairs a classifier for detection with a clustering pipeline "
+    "for actor attribution."
+)
