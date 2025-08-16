@@ -6,17 +6,19 @@ Streamlit Mini SOAR v2
 """
 from __future__ import annotations
 
+import os
+
 import joblib
 import pandas as pd
 import streamlit as st
 from pycaret.classification import load_model, predict_model
-import os
 
 st.set_page_config(page_title="Cognitive SOAR", layout="wide")
 
 MODEL_DIR = os.environ.get("MODEL_DIR", "models")
 CLASSIFIER_PATH_BASE = os.path.join(MODEL_DIR, "phishing_url_detector")
 CLUSTER_PATH = os.path.join(MODEL_DIR, "threat_actor_profiler.joblib")
+
 
 @st.cache_resource
 def _load_models():
@@ -26,6 +28,7 @@ def _load_models():
     features = cluster_payload["features"]
     mapping = cluster_payload.get("cluster_to_actor", {})
     return clf, pipe, features, mapping
+
 
 clf, cluster_pipe, feature_cols, cluster_map = _load_models()
 
@@ -45,28 +48,45 @@ with basic_tab:
         having_IP_Address = st.selectbox("IP address literal", [0, 1], index=0)
     with c3:
         URL_Length = st.slider("Scaled URL length", 0.0, 1.0, 0.5, 0.01)
-        abnormal_URL_Structure = st.slider("Abnormal structure score", 0.0, 1.0, 0.3, 0.01)
+        abnormal_URL_Structure = st.slider(
+            "Abnormal structure score", 0.0, 1.0, 0.3, 0.01
+        )
     with c4:
-        num_subdomains = st.number_input("Number of subdomains", min_value=0, max_value=10, value=1)
-        has_political_keyword = st.selectbox("Contains political keyword", [0, 1], index=0)
+        num_subdomains = st.number_input(
+            "Number of subdomains", min_value=0, max_value=10, value=1
+        )
+        has_political_keyword = st.selectbox(
+            "Contains political keyword", [0, 1], index=0
+        )
 
-    sample = pd.DataFrame([{
-        "SSLfinal_State": int(SSLfinal_State),
-        "Prefix_Suffix": int(Prefix_Suffix),
-        "Shortining_Service": int(Shortining_Service),
-        "having_IP_Address": int(having_IP_Address),
-        "URL_Length": float(URL_Length),
-        "abnormal_URL_Structure": float(abnormal_URL_Structure),
-        "num_subdomains": int(num_subdomains),
-        "has_political_keyword": int(has_political_keyword),
-    }])
+    sample = pd.DataFrame(
+        [
+            {
+                "SSLfinal_State": int(SSLfinal_State),
+                "Prefix_Suffix": int(Prefix_Suffix),
+                "Shortining_Service": int(Shortining_Service),
+                "having_IP_Address": int(having_IP_Address),
+                "URL_Length": float(URL_Length),
+                "abnormal_URL_Structure": float(abnormal_URL_Structure),
+                "num_subdomains": int(num_subdomains),
+                "has_political_keyword": int(has_political_keyword),
+            }
+        ]
+    )
 
     st.markdown("### Step 1. Verdict")
     if st.button("Analyze URL", type="primary"):
         pred = predict_model(clf, data=sample.copy())
-        # PyCaret sometimes names columns differently
-        label = int(pred.loc[0, "prediction_label"]) if "prediction_label" in pred else int(pred.loc[0, "Label"])
-        score = float(pred.loc[0, "prediction_score"]) if "prediction_score" in pred else float(pred.loc[0, "Score"])
+
+        if "prediction_label" in pred:
+            label = int(pred.loc[0, "prediction_label"])
+        else:
+            label = int(pred.loc[0, "Label"])
+
+        if "prediction_score" in pred:
+            score = float(pred.loc[0, "prediction_score"])
+        else:
+            score = float(pred.loc[0, "Score"])
 
         if label == 1:
             st.success(f"Verdict: MALICIOUS  (confidence {score:.2f})")
@@ -79,22 +99,27 @@ with basic_tab:
 
 with attrib_tab:
     st.subheader("Actor profile attribution")
-    if st.session_state.get("last_verdict_malicious") and st.session_state.get("last_sample") is not None:
+    if st.session_state.get("last_verdict_malicious") and st.session_state.get(
+        "last_sample"
+    ) is not None:
         X = st.session_state["last_sample"][feature_cols]
         cluster_id = int(cluster_pipe.predict(X)[0])
         actor = cluster_map.get(cluster_id, f"Cluster {cluster_id}")
         st.metric("Predicted actor profile", actor)
+
         with st.expander("Why this profile", expanded=True):
-            st.write("""
-**Organized Cybercrime**
-Typically high volume and noisy. Often uses shorteners and sometimes IP literals. Exploits structure tricks and drive by campaigns for monetization.
+            st.write(
+                "**Organized Cybercrime**\n"
+                "Typically high volume and noisy. Often uses shorteners and sometimes IP literals. "
+                "Exploits structure tricks and drive-by campaigns for monetization.\n\n"
+                "**Hacktivist**\n"
+                "Opportunistic action. Messaging can include political language. "
+                "Tactics vary with moderate structure anomalies.\n\n"
+                "**State Sponsored**\n"
+                "Higher sophistication. Valid SSL and subtlety with lower use of shorteners and IP literals. "
+                "Often patient and well resourced."
+            )
 
-**Hacktivist**
-Opportunistic action. Messaging can include political language. Tactics vary with moderate structure anomalies.
-
-**State Sponsored**
-Higher sophistication. Valid SSL and subtlety with lower use of shorteners and IP literals. Often patient and well resourced.
-            """)
         st.code(f"Cluster id: {cluster_id}  ->  {actor}")
     else:
         st.info("Run a prediction first. Attribution is only shown for malicious results.")
