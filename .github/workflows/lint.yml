@@ -17,5 +17,5 @@ jobs:
       - name: Install flake8
         run: python -m pip install --upgrade pip flake8
 
-      - name: Run flake8
-        run: flake8
+      - name: Run flake8 (use repo config)
+        run: flake8 --config=.flake8 .
