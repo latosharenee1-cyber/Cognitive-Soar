@@ -3,7 +3,8 @@ Train two models for Mini SOAR v2
 1. A classifier for malicious vs benign
 2. A clustering model to attribute malicious samples to actor profiles
 
-Uses PyCaret for the classifier and scikit-learn for clustering.
+Uses PyCaret for training the classifier, then also saves a plain scikit-learn
+model (joblib) for lightweight inference in the cloud.
 """
 from __future__ import annotations
 
@@ -136,8 +137,14 @@ def train_classifier(df: pd.DataFrame, out_dir: str = "models") -> str:
     )
     best = compare_models(include=["rf", "lr", "gbc"], n_select=1)
     final = finalize_model(best)
+
+    # PyCaret save (pipeline + model) for local use
     save_path = os.path.join(out_dir, "phishing_url_detector")
     save_model(final, save_path)
+
+    # ALSO save a plain scikit-learn model for Streamlit Cloud
+    joblib.dump(final, os.path.join(out_dir, "phishing_url_detector_sklearn.joblib"))
+
     return save_path
 
 
@@ -188,17 +195,9 @@ def build_cluster_label_map(df: pd.DataFrame, pipe: Pipeline) -> dict:
 
     mapping = {}
     for cid, c in centroids.iterrows():
-        score_crime = (
-            2 * c.Shortining_Service
-            + 2 * c.having_IP_Address
-            + c.abnormal_URL_Structure
-        )
+        score_crime = 2 * c.Shortining_Service + 2 * c.having_IP_Address + c.abnormal_URL_Structure
         score_hackt = 2 * c.has_political_keyword + 0.5 * c.Prefix_Suffix
-        score_state = (
-            2 * c.SSLfinal_State
-            - c.Shortining_Service
-            - c.having_IP_Address
-        )
+        score_state = 2 * c.SSLfinal_State - c.Shortining_Service - c.having_IP_Address
         best = np.argmax([score_crime, score_hackt, score_state])
         if best == 0:
             mapping[cid] = "Organized Cybercrime"
@@ -212,16 +211,27 @@ def build_cluster_label_map(df: pd.DataFrame, pipe: Pipeline) -> dict:
 def main():
     out_dir = os.environ.get("MODEL_DIR", "models")
     os.makedirs(out_dir, exist_ok=True)
+
+    # 1) Generate data
     df = generate_synthetic_data(n_each=2500, include_benign=True)
+
+    # 2) Train classifier (and save both PyCaret and sklearn versions)
     cls_path_base = train_classifier(df, out_dir=out_dir)
+
+    # 3) Train clustering on malicious-only rows
     clus_path = train_clustering(df[df["label"] == 1].copy(), out_dir=out_dir)
+
+    # 4) Compute readable cluster → actor mapping and store with the pipeline
     payload = joblib.load(clus_path)
     mapping = build_cluster_label_map(df[df["label"] == 1], payload["pipeline"])
     payload["cluster_to_actor"] = mapping
     joblib.dump(payload, clus_path)
+
+    # 5) Write a small text helper for humans
     with open(os.path.join(out_dir, "cluster_mapping.txt"), "w", encoding="utf-8") as f:
         for k, v in mapping.items():
             f.write(f"Cluster {k} => {v}\n")
+
     print("Classifier saved at base:", cls_path_base)
     print("Clustering saved at:", clus_path)
     print("Cluster mapping:", mapping)
