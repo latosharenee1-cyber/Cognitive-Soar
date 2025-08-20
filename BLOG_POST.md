@@ -148,4 +148,7 @@ MITRE. (n.d.). *ATT&CK for Enterprise*. https://attack.mitre.org/
 Pedregosa, F., Varoquaux, G., Gramfort, A., Michel, V., Thirion, B., Grisel, O., Blondel, M., Prettenhofer, P., Weiss, R., Dubourg, V., Vanderplas, J., Passos, A., Cournapeau, D., Brucher, M., Perrot, M., & Duchesnay, É. (2011). Scikit learn: Machine learning in Python. *Journal of Machine Learning Research, 12*, 2825–2830. https://jmlr.org/papers/v12/pedregosa11a.html
 
 Streamlit. (n.d.). *Cache resources*. Streamlit Docs. https://docs.streamlit.io/develop/api-reference/caching-and-state/st.cache_resource
+<<<<<<< HEAD
 
+=======
+>>>>>>> b9779d8 (Update BLOG_POST, Dockerfile, README; add live app screenshot)
