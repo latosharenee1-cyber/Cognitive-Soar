@@ -1,22 +1,19 @@
 FROM python:3.11-slim
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    MODEL_DIR=/app/models
+# System prep (optional but nice for builds)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+# install deps
+COPY requirements.txt .
+RUN python -m pip install --upgrade pip && pip install -r requirements.txt
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# copy app + models
+COPY . /app
+ENV MODEL_DIR=/app/models
 
-COPY train_model.py app.py ./
+# bind on $PORT (the platform will set it), fallback 8501 locally
+CMD streamlit run app.py --server.port ${PORT:-8501} --server.address 0.0.0.0
 
-RUN mkdir -p ${MODEL_DIR} && python train_model.py
-
-EXPOSE 8501
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]

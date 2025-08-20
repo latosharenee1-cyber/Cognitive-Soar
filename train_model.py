@@ -1,14 +1,15 @@
 """
 Train two models for Mini SOAR v2
-1. A classifier for malicious vs benign
-2. A clustering model to attribute malicious samples to actor profiles
-
-Uses PyCaret for training the classifier, then also saves a plain scikit-learn
-model (joblib) for lightweight inference in the cloud.
+1) A classifier for malicious vs benign
+   - PyCaret workflow (to match the lecture)
+   - PLUS a plain scikit-learn classifier saved with joblib for lightweight inference
+2) A clustering model (scikit-learn) to attribute malicious samples to actor profiles
 """
+
 from __future__ import annotations
 
 import os
+from typing import Dict
 
 import joblib
 import numpy as np
@@ -20,16 +21,33 @@ from pycaret.classification import (
     save_model,
 )
 from sklearn.cluster import KMeans
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 RANDOM_STATE = 42
 
+# One canonical list of features used everywhere
+FEATURE_COLS = [
+    "SSLfinal_State",
+    "Prefix_Suffix",
+    "Shortining_Service",
+    "having_IP_Address",
+    "URL_Length",
+    "abnormal_URL_Structure",
+    "num_subdomains",
+    "has_political_keyword",
+]
+
 
 def generate_synthetic_data(n_each: int = 2000, include_benign: bool = True) -> pd.DataFrame:
+    """
+    Create synthetic samples with patterns matching three threat profiles + benign.
+    Values are scaled or discrete to keep the UI simple.
+    """
     rng = np.random.default_rng(RANDOM_STATE)
 
-    def bern(p, size):
+    def bern(p: float, size: int) -> np.ndarray:
         return rng.binomial(1, p, size)
 
     rows = []
@@ -111,25 +129,21 @@ def generate_synthetic_data(n_each: int = 2000, include_benign: bool = True) -> 
         )
 
     df = pd.concat(rows, ignore_index=True)
+    # Clamp continuous values to [0, 1] since the UI sliders assume that range
     df["URL_Length"] = np.clip(df["URL_Length"], 0.0, 1.0)
     df["abnormal_URL_Structure"] = np.clip(df["abnormal_URL_Structure"], 0.0, 1.0)
     return df
 
 
-def train_classifier(df: pd.DataFrame, out_dir: str = "models") -> str:
+def train_classifier_pycaret(df: pd.DataFrame, out_dir: str = "models") -> str:
+    """
+    PyCaret workflow (matches lecture): setup -> compare -> finalize -> save_model(base_path).
+    Returns the *base path* used by PyCaret (without extension).
+    """
     os.makedirs(out_dir, exist_ok=True)
-    features = [
-        "SSLfinal_State",
-        "Prefix_Suffix",
-        "Shortining_Service",
-        "having_IP_Address",
-        "URL_Length",
-        "abnormal_URL_Structure",
-        "num_subdomains",
-        "has_political_keyword",
-    ]
+
     cls_setup(
-        data=df[features + ["label"]],
+        data=df[FEATURE_COLS + ["label"]],
         target="label",
         session_id=RANDOM_STATE,
         fold=5,
@@ -138,103 +152,117 @@ def train_classifier(df: pd.DataFrame, out_dir: str = "models") -> str:
     best = compare_models(include=["rf", "lr", "gbc"], n_select=1)
     final = finalize_model(best)
 
-    # PyCaret save (pipeline + model) for local use
-    save_path = os.path.join(out_dir, "phishing_url_detector")
-    save_model(final, save_path)
+    base_path = os.path.join(out_dir, "phishing_url_detector")
+    save_model(final, base_path)  # writes e.g. phishing_url_detector.pkl
+    return base_path
 
-    # ALSO save a plain scikit-learn model for Streamlit Cloud
-    joblib.dump(final, os.path.join(out_dir, "phishing_url_detector_sklearn.joblib"))
 
-    return save_path
+def train_classifier_sklearn(df: pd.DataFrame, out_dir: str = "models") -> str:
+    """
+    Train and save a *plain scikit-learn* classifier to avoid PyCaret dependency at inference time.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+
+    X = df[FEATURE_COLS].astype(float)
+    y = df["label"].astype(int)
+
+    clf = RandomForestClassifier(
+        n_estimators=300,
+        max_depth=None,
+        random_state=RANDOM_STATE,
+        class_weight="balanced",
+        n_jobs=-1,
+    )
+    clf.fit(X, y)
+
+    path = os.path.join(out_dir, "phishing_url_detector_sklearn.joblib")
+    joblib.dump(clf, path)
+    return path
 
 
 def train_clustering(df: pd.DataFrame, out_dir: str = "models") -> str:
+    """
+    Fit a KMeans pipeline on malicious-only rows and persist it.
+    """
     os.makedirs(out_dir, exist_ok=True)
-    feature_cols = [
-        "SSLfinal_State",
-        "Prefix_Suffix",
-        "Shortining_Service",
-        "having_IP_Address",
-        "URL_Length",
-        "abnormal_URL_Structure",
-        "num_subdomains",
-        "has_political_keyword",
-    ]
-    X = df[feature_cols].astype(float)
+
+    X = df[FEATURE_COLS].astype(float)
+
     pipe = Pipeline(
-        [
+        steps=[
             ("scaler", StandardScaler()),
             ("kmeans", KMeans(n_clusters=3, n_init=20, random_state=RANDOM_STATE)),
         ]
     )
     pipe.fit(X)
+
     path = os.path.join(out_dir, "threat_actor_profiler.joblib")
-    joblib.dump({"pipeline": pipe, "features": feature_cols, "cluster_order_hint": None}, path)
+    joblib.dump({"pipeline": pipe, "features": FEATURE_COLS, "cluster_order_hint": None}, path)
     return path
 
 
-def build_cluster_label_map(df: pd.DataFrame, pipe: Pipeline) -> dict:
-    X = df[
-        [
-            "SSLfinal_State",
-            "Prefix_Suffix",
-            "Shortining_Service",
-            "having_IP_Address",
-            "URL_Length",
-            "abnormal_URL_Structure",
-            "num_subdomains",
-            "has_political_keyword",
-        ]
-    ].astype(float)
-    scaler = pipe.named_steps["scaler"]
-    kmeans = pipe.named_steps["kmeans"]
+def build_cluster_label_map(df: pd.DataFrame, pipe: Pipeline) -> Dict[int, str]:
+    """
+    Inspect cluster centroids (in original feature space) and assign the most likely actor label.
+    """
+    X = df[FEATURE_COLS].astype(float)
+
+    scaler: StandardScaler = pipe.named_steps["scaler"]
+    kmeans: KMeans = pipe.named_steps["kmeans"]
+
     centroids = pd.DataFrame(
         scaler.inverse_transform(kmeans.cluster_centers_),
         columns=X.columns,
     )
 
-    mapping = {}
+    mapping: Dict[int, str] = {}
     for cid, c in centroids.iterrows():
         score_crime = 2 * c.Shortining_Service + 2 * c.having_IP_Address + c.abnormal_URL_Structure
         score_hackt = 2 * c.has_political_keyword + 0.5 * c.Prefix_Suffix
         score_state = 2 * c.SSLfinal_State - c.Shortining_Service - c.having_IP_Address
-        best = np.argmax([score_crime, score_hackt, score_state])
+
+        best = int(np.argmax([score_crime, score_hackt, score_state]))
         if best == 0:
             mapping[cid] = "Organized Cybercrime"
         elif best == 1:
             mapping[cid] = "Hacktivist"
         else:
             mapping[cid] = "State Sponsored"
+
     return mapping
 
 
-def main():
+def main() -> None:
     out_dir = os.environ.get("MODEL_DIR", "models")
     os.makedirs(out_dir, exist_ok=True)
 
-    # 1) Generate data
+    # 1) Generate synthetic dataset
     df = generate_synthetic_data(n_each=2500, include_benign=True)
 
-    # 2) Train classifier (and save both PyCaret and sklearn versions)
-    cls_path_base = train_classifier(df, out_dir=out_dir)
+    # 2) Train classifier (PyCaret version to satisfy the lecture requirement)
+    pycaret_base = train_classifier_pycaret(df, out_dir=out_dir)
 
-    # 3) Train clustering on malicious-only rows
+    # 3) Train sklean-only classifier for lightweight inference in Docker/Spaces
+    sk_path = train_classifier_sklearn(df, out_dir=out_dir)
+
+    # 4) Train clustering on *malicious-only* samples
     clus_path = train_clustering(df[df["label"] == 1].copy(), out_dir=out_dir)
 
-    # 4) Compute readable cluster → actor mapping and store with the pipeline
+    # 5) Compute cluster -> actor map and store it alongside the pipeline
     payload = joblib.load(clus_path)
     mapping = build_cluster_label_map(df[df["label"] == 1], payload["pipeline"])
     payload["cluster_to_actor"] = mapping
     joblib.dump(payload, clus_path)
 
-    # 5) Write a small text helper for humans
+    # 6) Write a tiny text helper for humans
     with open(os.path.join(out_dir, "cluster_mapping.txt"), "w", encoding="utf-8") as f:
         for k, v in mapping.items():
             f.write(f"Cluster {k} => {v}\n")
 
-    print("Classifier saved at base:", cls_path_base)
-    print("Clustering saved at:", clus_path)
-    print("Cluster mapping:", mapping)
+    print("PyCaret classifier base path:      ", pycaret_base)
+    print("Sklearn classifier saved at:       ", sk_path)
+    print("Clustering pipeline saved at:      ", clus_path)
+    print("Cluster mapping:                   ", mapping)
 
 
 if __name__ == "__main__":

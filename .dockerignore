@@ -1,0 +1,8 @@
+﻿__pycache__/
+*.pyc
+*.log
+.venv/
+.venv311/
+.git/
+figures/
+.streamlit/

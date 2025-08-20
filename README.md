@@ -1,24 +1,20 @@
-# Cognitive SOAR
+# Cognitive SOAR – From Prediction to Attribution
 
-From prediction to attribution. This upgrade adds an enrichment step to the
-Mini SOAR lecture app by pairing a supervised detector with an unsupervised
-profiler for likely actor attribution.
+Mini-SOAR app that (1) classifies URL features as **Benign/Malicious** using PyCaret, and
+(2) if malicious, runs a **clustering** pipeline to attribute a likely actor profile
+(**Organized Cybercrime**, **Hacktivist**, **State Sponsored**).
 
-## What it does
-- Predicts malicious vs benign from URL features using a PyCaret classifier
-- If malicious, predicts a likely actor profile using a K Means pipeline
-- Presents results in Streamlit with a Threat Attribution tab
+## How it works
+- **train_model.py** builds two artifacts in `models/`:
+  - `phishing_url_detector.pkl` (PyCaret classifier)
+  - `threat_actor_profiler.joblib` (scikit-learn pipeline with K-Means + StandardScaler and a saved cluster→actor map)
+- **app.py** gates attribution on the malicious verdict and shows the mapped actor profile with a short rationale.
 
-## Quickstart
-```bash
-make install
-make train
-make run
-```
+## Quick start (Windows / PowerShell)
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate
+pip install -r requirements.txt
+python train_model.py        # saves models/ files
+streamlit run app.py
 
-Or with Docker:
-```bash
-make docker-up
-```
-
-Open http://localhost:8501

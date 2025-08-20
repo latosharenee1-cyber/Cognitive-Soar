@@ -1,8 +1,14 @@
-version: "3.9"
+﻿name: cognitive-soar
+
 services:
-  app:
-    build: .
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "8501:8501"
     environment:
       - MODEL_DIR=/app/models
+    # Mount your trained models from the host so you don't need to rebuild the image to update them.
+    volumes:
+      - ./models:/app/models:ro
